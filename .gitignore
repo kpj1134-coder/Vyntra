@@ -1,0 +1,29 @@
+# ========================================
+# VYNTRA – DEPLOYMENT FILES
+# ========================================
+
+# Frontend (.env NOT committed – create .env.production on Vercel)
+frontend/.env
+frontend/.env.local
+frontend/.env.production
+
+# Backend secrets
+backend/src/main/resources/application-local.properties
+
+# Build outputs
+frontend/dist/
+frontend/node_modules/
+backend/target/
+
+# IDE
+.idea/
+*.iml
+.vscode/settings.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
