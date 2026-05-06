@@ -1,7 +1,10 @@
 import axios from 'axios'
 
 // Use env var (set in Vercel), fallback to Render backend URL
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'https://vyntra-backend-l96w.onrender.com/api'
+let API_BASE = import.meta.env.VITE_API_BASE_URL || 'https://vyntra-backend-l96w.onrender.com/api'
+if (!API_BASE.endsWith('/api')) {
+  API_BASE += '/api'
+}
 
 const api = axios.create({ baseURL: API_BASE })
 
