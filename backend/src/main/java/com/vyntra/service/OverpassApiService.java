@@ -33,6 +33,7 @@ public class OverpassApiService {
                     .header("User-Agent", "Vyntra-Travel-App/1.0")
                     .retrieve()
                     .bodyToMono(String.class)
+                    .timeout(java.time.Duration.ofSeconds(8))
                     .block();
 
             return parseOverpassResponse(response, category, lat, lon);
@@ -46,25 +47,25 @@ public class OverpassApiService {
         String around = "(around:" + radius + "," + lat + "," + lon + ")";
         switch (category.toLowerCase()) {
             case "food": case "restaurant":
-                return "[out:json][timeout:20];(node[\"amenity\"~\"restaurant|cafe|fast_food|food_court\"]" + around + ";way[\"amenity\"~\"restaurant|cafe\"]" + around + ";);out center body 15;";
+                return "[out:json][timeout:7];(node[\"amenity\"~\"restaurant|cafe|fast_food\"]" + around + ";);out body 12;";
             case "hotel": case "stay":
-                return "[out:json][timeout:20];(node[\"tourism\"~\"hotel|motel|hostel|guest_house\"]" + around + ";way[\"tourism\"~\"hotel|motel|hostel\"]" + around + ";);out center body 10;";
+                return "[out:json][timeout:7];(node[\"tourism\"~\"hotel|motel|hostel|guest_house\"]" + around + ";);out body 8;";
             case "attraction": case "tourism":
-                return "[out:json][timeout:20];(node[\"tourism\"~\"attraction|museum|viewpoint|zoo|theme_park|artwork\"]" + around + ";way[\"tourism\"~\"attraction|museum|viewpoint\"]" + around + ";);out center body 15;";
+                return "[out:json][timeout:7];(node[\"tourism\"~\"attraction|museum|viewpoint|zoo\"]" + around + ";);out body 12;";
             case "heritage": case "historic":
-                return "[out:json][timeout:20];(node[\"historic\"~\"monument|castle|ruins|archaeological_site|fort\"]" + around + ";way[\"historic\"]" + around + ";node[\"tourism\"=\"museum\"]" + around + ";);out center body 12;";
+                return "[out:json][timeout:7];(node[\"historic\"~\"monument|castle|ruins|fort\"]" + around + ";node[\"tourism\"=\"museum\"]" + around + ";);out body 10;";
             case "nature": case "park":
-                return "[out:json][timeout:20];(node[\"leisure\"~\"park|nature_reserve|garden\"]" + around + ";node[\"natural\"~\"peak|waterfall|beach|lake\"]" + around + ";way[\"leisure\"~\"park|nature_reserve\"]" + around + ";);out center body 12;";
+                return "[out:json][timeout:7];(node[\"leisure\"~\"park|nature_reserve|garden\"]" + around + ";node[\"natural\"~\"peak|waterfall|beach\"]" + around + ";);out body 10;";
             case "shopping":
-                return "[out:json][timeout:20];(node[\"shop\"~\"mall|supermarket|clothes|market\"]" + around + ";node[\"amenity\"=\"marketplace\"]" + around + ";way[\"shop\"~\"mall\"]" + around + ";);out center body 10;";
+                return "[out:json][timeout:7];(node[\"shop\"~\"mall|supermarket|market\"]" + around + ";);out body 8;";
             case "spiritual": case "temple":
-                return "[out:json][timeout:20];(node[\"amenity\"=\"place_of_worship\"]" + around + ";way[\"amenity\"=\"place_of_worship\"]" + around + ";);out center body 12;";
+                return "[out:json][timeout:7];(node[\"amenity\"=\"place_of_worship\"]" + around + ";);out body 10;";
             case "adventure":
-                return "[out:json][timeout:20];(node[\"leisure\"~\"sports_centre|climbing|swimming_pool|golf_course\"]" + around + ";node[\"sport\"]" + around + ";node[\"tourism\"~\"viewpoint|wilderness_hut\"]" + around + ";);out center body 10;";
+                return "[out:json][timeout:7];(node[\"leisure\"~\"sports_centre|climbing\"]" + around + ";node[\"tourism\"=\"viewpoint\"]" + around + ";);out body 8;";
             case "emergency": case "hospital":
-                return "[out:json][timeout:20];(node[\"amenity\"~\"hospital|clinic|pharmacy|police|atm|bank\"]" + around + ";way[\"amenity\"~\"hospital|clinic\"]" + around + ";);out center body 10;";
+                return "[out:json][timeout:7];(node[\"amenity\"~\"hospital|clinic|pharmacy|atm\"]" + around + ";);out body 8;";
             default:
-                return "[out:json][timeout:20];(node[\"amenity\"~\"restaurant|cafe|tourism|attraction\"]" + around + ";node[\"tourism\"]" + around + ";);out center body 15;";
+                return "[out:json][timeout:7];(node[\"amenity\"~\"restaurant|cafe\"]" + around + ";node[\"tourism\"]" + around + ";);out body 12;";
         }
     }
 

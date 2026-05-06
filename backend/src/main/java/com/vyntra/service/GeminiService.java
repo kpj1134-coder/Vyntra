@@ -2,14 +2,15 @@ package com.vyntra.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 @Service
 public class GeminiService {
@@ -21,32 +22,29 @@ public class GeminiService {
     @Value("${gemini.api.key}")
     private String apiKey;
 
-    @Value("${gemini.model:gemini-2.0-flash}")
-    private String model;
-
     public GeminiService(WebClient webClient) {
         this.webClient = webClient;
     }
 
-    /** Generate text from a prompt using Gemini API */
+    /** Generate text from a prompt using Gemini 2.0 Flash */
     public String generate(String prompt) {
-        if (apiKey == null || apiKey.isBlank() || apiKey.equals("demo")) {
-            return fallbackResponse(prompt);
+        if (apiKey == null || apiKey.isBlank() || apiKey.equalsIgnoreCase("demo")) {
+            log.warn("Gemini API key not configured — using fallback");
+            return null; // Caller handles null as fallback
         }
         try {
-            String url = "https://generativelanguage.googleapis.com/v1beta/models/"
-                    + model + ":generateContent?key=" + apiKey;
+            String url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + apiKey;
 
             ObjectNode body = objectMapper.createObjectNode();
             ArrayNode contents = body.putArray("contents");
             ObjectNode content = contents.addObject();
+            content.put("role", "user");
             ArrayNode parts = content.putArray("parts");
             parts.addObject().put("text", prompt);
 
-            // Generation config
-            ObjectNode genConfig = body.putObject("generationConfig");
-            genConfig.put("maxOutputTokens", 1024);
-            genConfig.put("temperature", 0.7);
+            ObjectNode config = body.putObject("generationConfig");
+            config.put("maxOutputTokens", 800);
+            config.put("temperature", 0.7);
 
             String response = webClient.post()
                     .uri(url)
@@ -54,38 +52,33 @@ public class GeminiService {
                     .bodyValue(body.toString())
                     .retrieve()
                     .bodyToMono(String.class)
+                    .timeout(java.time.Duration.ofSeconds(15))
                     .block();
 
             JsonNode root = objectMapper.readTree(response);
-            JsonNode text = root.path("candidates").get(0)
-                    .path("content").path("parts").get(0).path("text");
-            return text.asText("I'm having trouble generating a response right now.");
+            JsonNode candidates = root.path("candidates");
+            if (candidates.isArray() && candidates.size() > 0) {
+                String text = candidates.get(0).path("content").path("parts").get(0).path("text").asText("");
+                if (!text.isBlank()) {
+                    log.info("Gemini response received ({} chars)", text.length());
+                    return text.trim();
+                }
+            }
+            // Log the actual response for debugging
+            log.warn("Gemini returned unexpected structure: {}", response.substring(0, Math.min(300, response.length())));
+            return null;
+
+        } catch (WebClientResponseException e) {
+            log.error("Gemini API HTTP error {}: {}", e.getStatusCode(), e.getResponseBodyAsString());
+            return null;
         } catch (Exception e) {
-            log.warn("Gemini API error: {}", e.getMessage());
-            return fallbackResponse(prompt);
+            log.error("Gemini API call failed: {}", e.getMessage());
+            return null;
         }
     }
 
-    private String fallbackResponse(String prompt) {
-        String lower = prompt.toLowerCase();
-        if (lower.contains("plan") || lower.contains("trip") || lower.contains("itinerary")) {
-            return "I can help you plan your trip! Go to Plan Trip from the sidebar, enter your source and destination, pick your travel style, and I'll generate an optimized route with real places along the way.";
-        }
-        if (lower.contains("food") || lower.contains("eat") || lower.contains("restaurant")) {
-            return "For food recommendations, I search real restaurants and cafes along your route using OpenStreetMap data. Look for the 'Nearby Food' button on each stop in your trip results!";
-        }
-        if (lower.contains("hotel") || lower.contains("stay") || lower.contains("accommodation")) {
-            return "Hotel recommendations are shown in your trip results. Click 'Show More Hotels' to see additional stay options near your route.";
-        }
-        if (lower.contains("rescue") || lower.contains("emergency") || lower.contains("problem")) {
-            return "Use Rescue Mode from the sidebar if you face any issues! It handles rain, road closures, low budget, fatigue, and more. It will instantly replan your route with safer alternatives.";
-        }
-        if (lower.contains("hello") || lower.contains("hi") || lower.contains("hey")) {
-            return "Hello! 👋 I'm Vyntra AI. I can help with trip planning, route optimization, nearby place recommendations, and travel advice. What would you like to know?";
-        }
-        if (lower.contains("why") || lower.contains("how")) {
-            return "Vyntra uses real geocoding, routing, and place data from OpenStreetMap to plan your trip. Places are scored by rating, distance from route, and your preferences to give you the best stops.";
-        }
-        return "I'm your Vyntra travel assistant! Ask me about trip planning, places to visit, food spots, hotels, or rescue mode help.";
+    /** Returns true if Gemini is configured and likely available */
+    public boolean isAvailable() {
+        return apiKey != null && !apiKey.isBlank() && !apiKey.equalsIgnoreCase("demo");
     }
 }

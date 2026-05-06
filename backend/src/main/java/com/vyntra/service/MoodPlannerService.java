@@ -29,36 +29,44 @@ public class MoodPlannerService {
 
     public MoodPlanResponse analyzeMoodAndPlan(MoodPlanRequest request) {
         String moodInput = buildMoodInput(request);
-        log.info("EmotionRoute: Analyzing mood for '{}'", moodInput);
+        log.info("EmotionRoute: Analyzing mood '{}' for {} → {}", moodInput, request.getSource(), request.getDestination());
 
+        // Step 1: Try Gemini AI
+        String geminiPrompt = buildGeminiPrompt(request, moodInput);
+        String rawResponse  = null;
         try {
-            // 1. Ask Gemini to classify mood and return strict JSON
-            String geminiPrompt = buildGeminiPrompt(request, moodInput);
-            String rawResponse = geminiService.generate(geminiPrompt);
-
-            // 2. Extract JSON from response (Gemini sometimes wraps it in markdown)
-            String cleanJson = extractJson(rawResponse);
-
-            // 3. Parse JSON into MoodAnalysis
-            MoodAnalysis analysis = parseGeminiJson(cleanJson);
-
-            // 4. Build recommended places from analysis
-            List<String> recommendedPlaces = buildRecommendedPlaces(analysis);
-
-            // 5. Build human-readable trip advice
-            String advice = buildTripAdvice(analysis, request);
-
-            MoodPlanResponse response = new MoodPlanResponse();
-            response.setMoodAnalysis(analysis);
-            response.setRecommendedPlaces(recommendedPlaces);
-            response.setTripAdvice(advice);
-            response.setFallback(false);
-            return response;
-
+            rawResponse = geminiService.generate(geminiPrompt);
         } catch (Exception e) {
-            log.warn("EmotionRoute: Gemini mood analysis failed, using fallback. Error: {}", e.getMessage());
-            return buildFallbackResponse(request);
+            log.error("EmotionRoute: Gemini call threw exception: {}", e.getMessage());
         }
+
+        // Step 2: If Gemini returned something, parse it
+        if (rawResponse != null && !rawResponse.isBlank()) {
+            try {
+                String cleanJson = extractJson(rawResponse);
+                MoodAnalysis analysis = parseGeminiJson(cleanJson);
+                List<String> recommended = buildRecommendedPlaces(analysis);
+                String advice = buildTripAdvice(analysis, request);
+
+                MoodPlanResponse resp = new MoodPlanResponse();
+                resp.setMoodAnalysis(analysis);
+                resp.setRecommendedPlaces(recommended);
+                resp.setTripAdvice(advice);
+                resp.setFallback(false);  // ← Real Gemini result
+                resp.setFallbackMessage(null);
+                log.info("EmotionRoute: Gemini mood analysis succeeded: mood={}", analysis.getMood());
+                return resp;
+            } catch (Exception e) {
+                log.error("EmotionRoute: Failed to parse Gemini JSON response: {}. Raw: {}",
+                    e.getMessage(), rawResponse.substring(0, Math.min(200, rawResponse.length())));
+            }
+        } else {
+            log.warn("EmotionRoute: Gemini returned null/empty. isAvailable={}", geminiService.isAvailable());
+        }
+
+        // Step 3: Rule-based fallback (only reached if Gemini fails)
+        log.warn("EmotionRoute: Using rule-based fallback for mood '{}'", moodInput);
+        return buildFallbackResponse(request);
     }
 
     /** Build combined mood text from selected button + free text */

@@ -9,6 +9,7 @@ import TripResult from './pages/TripResult'
 import Rescue from './pages/Rescue'
 import History from './pages/History'
 import Profile from './pages/Profile'
+import MoodPlanner from './pages/MoodPlanner'
 import Sidebar from './components/Sidebar'
 import Chatbot from './components/Chatbot'
 
@@ -45,6 +46,7 @@ export default function App() {
       <Route path="/rescue" element={<ProtectedRoute><AppLayout><Rescue /></AppLayout></ProtectedRoute>} />
       <Route path="/history" element={<ProtectedRoute><AppLayout><History /></AppLayout></ProtectedRoute>} />
       <Route path="/profile" element={<ProtectedRoute><AppLayout><Profile /></AppLayout></ProtectedRoute>} />
+      <Route path="/mood-planner" element={<ProtectedRoute><AppLayout><MoodPlanner /></AppLayout></ProtectedRoute>} />
     </Routes>
   )
 }

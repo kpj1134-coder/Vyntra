@@ -41,7 +41,8 @@ public class SecurityConfig {
                 .requestMatchers("/api/auth/**").permitAll()
                 .requestMatchers("/api/health").permitAll()
                 .requestMatchers("/api/weather/**").permitAll()
-                // EmotionRoute AI mood planner — requires JWT auth (included in anyRequest)
+                .requestMatchers("/api/ai/**").authenticated()   // EmotionRoute AI — JWT required
+                .requestMatchers("/api/chat").authenticated()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);

@@ -8,11 +8,12 @@ export default function Sidebar() {
   const handleLogout = () => { logout(); navigate('/') }
 
   const links = [
-    { to: '/dashboard', icon: '⌂', label: 'Dashboard' },
-    { to: '/plan', icon: '◎', label: 'Plan Trip' },
-    { to: '/rescue', icon: '⚡', label: 'Rescue Mode' },
-    { to: '/history', icon: '☰', label: 'History' },
-    { to: '/profile', icon: '◉', label: 'Profile' },
+    { to: '/dashboard',    icon: '⌂',  label: 'Dashboard' },
+    { to: '/plan',         icon: '◎',  label: 'Plan Trip' },
+    { to: '/mood-planner', icon: '🧠', label: 'AI Mood Planner' },
+    { to: '/rescue',       icon: '⚡', label: 'Rescue Mode' },
+    { to: '/history',      icon: '☰',  label: 'History' },
+    { to: '/profile',      icon: '◉',  label: 'Profile' },
   ]
 
   return (

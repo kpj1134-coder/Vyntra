@@ -126,45 +126,43 @@ public class TripService {
         return response;
     }
 
-    /** Discover real places along route waypoints using Overpass API */
+    /** Discover real places along route - FAST mode: 1 midpoint + max 2 categories */
     private List<PlaceDTO> discoverRealPlaces(RouteDTO route, TripPlanRequest req) {
         List<PlaceDTO> all = new ArrayList<>();
         List<double[]> waypoints = route.getWaypoints();
-        if (waypoints == null || waypoints.isEmpty()) return all;
+        if (waypoints == null || waypoints.isEmpty()) return generateFallbackPlaces(new ArrayList<>(), List.of("food", "attraction"));
 
-        // Determine search categories from interests + travelStyle
+        // Resolve categories but cap at 2 to keep response fast
         List<String> categories = resolveCategories(req.getInterests(), req.getTravelStyle());
-        log.info("Searching categories: {} at {} waypoints", categories, waypoints.size());
+        if (categories.size() > 2) categories = categories.subList(0, 2);
+        log.info("Fast search: categories={} at midpoint", categories);
 
-        // Search at evenly spaced waypoints (max 4 search points to avoid rate limiting)
-        int totalWps = waypoints.size();
-        int[] indices = {0, totalWps / 3, 2 * totalWps / 3, totalWps - 1};
+        // Search ONLY at the midpoint of the route (fastest single call)
+        int midIdx = waypoints.size() / 2;
+        double[] midpoint = waypoints.get(midIdx);
 
-        for (int idx : indices) {
-            if (idx >= totalWps) continue;
-            double[] wp = waypoints.get(idx);
-            for (String cat : categories) {
-                try {
-                    List<PlaceDTO> found = overpassApiService.searchNearby(cat, wp[0], wp[1], 3000);
-                    all.addAll(found);
-                    Thread.sleep(300); // Be respectful to free Overpass API
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                } catch (Exception e) {
-                    log.warn("Search failed for category {} at waypoint: {}", cat, e.getMessage());
-                }
+        // Single combined Overpass query for all categories at midpoint
+        for (String cat : categories) {
+            try {
+                List<PlaceDTO> found = overpassApiService.searchNearby(cat, midpoint[0], midpoint[1], 8000);
+                all.addAll(found);
+                // No sleep — be fast
+            } catch (Exception e) {
+                log.warn("Overpass search failed for {}: {}", cat, e.getMessage());
             }
+            if (all.size() >= 30) break; // Enough places, stop early
         }
 
-        // If no real places found, fall back to SerpAPI demo data
+        // Fallback if Overpass returned nothing
         if (all.isEmpty()) {
-            log.warn("No real places found via Overpass, using fallback data");
+            log.warn("No real places found via Overpass, using fallback");
             all = generateFallbackPlaces(waypoints, categories);
         }
 
-        log.info("Total places discovered: {}", all.size());
+        log.info("Places discovered: {}", all.size());
         return all;
     }
+
 
     private List<String> resolveCategories(List<String> interests, String travelStyle) {
         Set<String> cats = new LinkedHashSet<>();
