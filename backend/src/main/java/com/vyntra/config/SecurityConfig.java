@@ -38,11 +38,12 @@ public class SecurityConfig {
             .csrf(csrf -> csrf.disable())
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/api/auth/**").permitAll()
-                .requestMatchers("/api/health").permitAll()
-                .requestMatchers("/api/weather/**").permitAll()
-                .requestMatchers("/api/ai/**").authenticated()   // EmotionRoute AI — JWT required
-                .requestMatchers("/api/chat").authenticated()
+                .requestMatchers("/").permitAll()                   // Root — no 403
+                .requestMatchers("/api/health").permitAll()         // Health check
+                .requestMatchers("/api/auth/**").permitAll()        // Login/Register
+                .requestMatchers("/api/weather/**").permitAll()     // Weather (public)
+                .requestMatchers("/actuator/**").permitAll()        // Render health probe
+                .requestMatchers("/api/ai/**").authenticated()      // Mood planner
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
