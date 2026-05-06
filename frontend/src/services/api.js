@@ -1,6 +1,7 @@
 import axios from 'axios'
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api'
+// Use env var (set in Vercel), fallback to Render backend URL
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'https://vyntra-backend-l96w.onrender.com/api'
 
 const api = axios.create({ baseURL: API_BASE })
 
@@ -20,7 +21,7 @@ api.interceptors.response.use(
     }
     if (!error.response) {
       error.backendDown = true
-      error.message = 'Backend not reachable. Please start Spring Boot on port 8091.'
+      error.message = 'Cannot reach the server. Please check your connection or try again later.'
     }
     return Promise.reject(error)
   }
