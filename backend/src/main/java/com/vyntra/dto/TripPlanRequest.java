@@ -13,6 +13,7 @@ public class TripPlanRequest {
     private String mode;
     private List<String> interests;
     private String problemFaced;
+    private String travelStyle; // Adventure, Heritage, Foodie, Nature, Spiritual, etc.
 
     public TripPlanRequest() {}
 
@@ -42,4 +43,7 @@ public class TripPlanRequest {
 
     public String getProblemFaced() { return problemFaced; }
     public void setProblemFaced(String problemFaced) { this.problemFaced = problemFaced; }
+
+    public String getTravelStyle() { return travelStyle; }
+    public void setTravelStyle(String travelStyle) { this.travelStyle = travelStyle; }
 }

@@ -28,14 +28,16 @@ api.interceptors.response.use(
 
 export const authAPI = {
   register: (data) => api.post('/auth/register', data),
-  login: (data) => api.post('/auth/login', data),
+  login:    (data) => api.post('/auth/login', data),
 }
 
 export const tripAPI = {
-  plan: (data) => api.post('/trips/plan', data),
-  getHistory: () => api.get('/trips/history'),
-  getTrip: (id) => api.get(`/trips/${id}`),
-  save: (id) => api.post(`/trips/${id}/save`),
+  plan:       (data)              => api.post('/trips/plan', data),
+  getHistory: ()                  => api.get('/trips/history'),
+  getTrip:    (id)                => api.get(`/trips/${id}`),
+  save:       (id)                => api.post(`/trips/${id}/save`),
+  morePlaces: (id, category, offset) =>
+    api.get(`/trips/${id}/more-places?category=${category}&offset=${offset || 0}`),
 }
 
 export const rescueAPI = {
@@ -47,7 +49,8 @@ export const weatherAPI = {
 }
 
 export const placeAPI = {
-  search: (query, lat, lng) => api.get(`/places/search?query=${encodeURIComponent(query)}&lat=${lat}&lng=${lng}`),
+  search: (query, lat, lng) =>
+    api.get(`/places/search?query=${encodeURIComponent(query)}&lat=${lat}&lng=${lng}`),
 }
 
 export const chatAPI = {

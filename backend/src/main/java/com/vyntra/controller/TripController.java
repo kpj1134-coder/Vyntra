@@ -6,14 +6,19 @@ import com.vyntra.service.TripService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+
 import java.util.List;
 import java.util.Map;
 
 @RestController
 @RequestMapping("/api/trips")
 public class TripController {
+
     private final TripService tripService;
-    public TripController(TripService tripService) { this.tripService = tripService; }
+
+    public TripController(TripService tripService) {
+        this.tripService = tripService;
+    }
 
     @PostMapping("/plan")
     public ResponseEntity<TripPlanResponse> planTrip(@RequestBody TripPlanRequest request,
@@ -37,5 +42,15 @@ public class TripController {
             @AuthenticationPrincipal User user) {
         tripService.saveItinerary(id, user);
         return ResponseEntity.ok(Map.of("message", "Itinerary saved successfully"));
+    }
+
+    /** Show More Places for a category */
+    @GetMapping("/{id}/more-places")
+    public ResponseEntity<List<PlaceDTO>> getMorePlaces(
+            @PathVariable String id,
+            @RequestParam(defaultValue = "food") String category,
+            @RequestParam(defaultValue = "0") int offset,
+            @AuthenticationPrincipal User user) {
+        return ResponseEntity.ok(tripService.getMorePlaces(id, category, user, offset));
     }
 }

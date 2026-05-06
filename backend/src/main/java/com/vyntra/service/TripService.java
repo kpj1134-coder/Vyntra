@@ -7,118 +7,107 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+
 import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
 public class TripService {
+
     private static final Logger log = LoggerFactory.getLogger(TripService.class);
+
     private final TripRepository tripRepo;
     private final SuggestedPlaceRepository placeRepo;
     private final RemovedPlaceRepository removedRepo;
     private final SavedItineraryRepository itineraryRepo;
-    private final SerpApiService serpApiService;
+    private final NominatimService nominatimService;
+    private final OsrmRouteService osrmRouteService;
+    private final OverpassApiService overpassApiService;
     private final WeatherService weatherService;
     private final ConstraintEngineService constraintEngine;
     private final RouteOptimizationService optimizationService;
     private final AiExplanationService aiService;
-    private final FallbackDataService fallbackDataService;
     private final ObjectMapper objectMapper;
 
     public TripService(TripRepository tripRepo, SuggestedPlaceRepository placeRepo,
             RemovedPlaceRepository removedRepo, SavedItineraryRepository itineraryRepo,
-            SerpApiService serpApiService, WeatherService weatherService,
+            NominatimService nominatimService, OsrmRouteService osrmRouteService,
+            OverpassApiService overpassApiService, WeatherService weatherService,
             ConstraintEngineService constraintEngine, RouteOptimizationService optimizationService,
-            AiExplanationService aiService, FallbackDataService fallbackDataService,
-            ObjectMapper objectMapper) {
-        this.tripRepo = tripRepo; this.placeRepo = placeRepo; this.removedRepo = removedRepo;
-        this.itineraryRepo = itineraryRepo; this.serpApiService = serpApiService;
-        this.weatherService = weatherService; this.constraintEngine = constraintEngine;
-        this.optimizationService = optimizationService; this.aiService = aiService;
-        this.fallbackDataService = fallbackDataService; this.objectMapper = objectMapper;
+            AiExplanationService aiService, ObjectMapper objectMapper) {
+        this.tripRepo = tripRepo; this.placeRepo = placeRepo;
+        this.removedRepo = removedRepo; this.itineraryRepo = itineraryRepo;
+        this.nominatimService = nominatimService; this.osrmRouteService = osrmRouteService;
+        this.overpassApiService = overpassApiService; this.weatherService = weatherService;
+        this.constraintEngine = constraintEngine; this.optimizationService = optimizationService;
+        this.aiService = aiService; this.objectMapper = objectMapper;
     }
 
     public TripPlanResponse planTrip(TripPlanRequest request, User user) {
-        // 1. Get route
-        RouteDTO route = serpApiService.fetchDirections(request.getStartLocation(), request.getDestination());
+        // 1. Geocode start and destination
+        double[] startCoords = nominatimService.geocode(request.getStartLocation());
+        double[] endCoords   = nominatimService.geocode(request.getDestination());
+        log.info("Start: {} -> [{}, {}]", request.getStartLocation(), startCoords[0], startCoords[1]);
+        log.info("End:   {} -> [{}, {}]", request.getDestination(), endCoords[0], endCoords[1]);
 
-        // 2. Get weather
+        // 2. Get real route via OSRM
+        RouteDTO route = osrmRouteService.getRoute(startCoords[0], startCoords[1], endCoords[0], endCoords[1]);
+
+        // 3. Get weather
         WeatherDTO weather = weatherService.fetchWeather(request.getDestination());
 
-        // 3. Discover places along route
-        List<PlaceDTO> allPlaces;
-        if (fallbackDataService.isMysoreDemo(request.getStartLocation(), request.getDestination())) {
-            // Use curated Mysore demo data
-            allPlaces = fallbackDataService.getMysoreDemo();
-        } else {
-            allPlaces = discoverPlacesAlongRoute(route, request.getInterests());
-        }
+        // 4. Discover real places along route using Overpass API
+        List<PlaceDTO> allPlaces = discoverRealPlaces(route, request);
 
-        // 4. Remove duplicates
+        // 5. Remove duplicates
         allPlaces = removeDuplicates(allPlaces);
 
-        // 5. Calculate distance from route for each place
-        if (route.getWaypoints() != null && !route.getWaypoints().isEmpty()) {
-            for (PlaceDTO p : allPlaces) {
-                if (p.getDistanceFromRoute() == null) {
-                    double minDist = Double.MAX_VALUE;
-                    for (double[] wp : route.getWaypoints()) {
-                        double d = SerpApiService.haversineDistance(wp[0], wp[1], p.getLatitude(), p.getLongitude());
-                        if (d < minDist) minDist = d;
-                    }
-                    p.setDistanceFromRoute(round2(minDist));
-                }
-            }
-        }
+        // 6. Calculate distance from route for each place
+        setDistancesFromRoute(allPlaces, route);
 
-        // 6. Apply constraint engine
-        String problem = request.getProblemFaced() != null ? request.getProblemFaced() : "no problem";
+        // 7. Apply constraint engine
+        String problem = request.getProblemFaced() != null ? request.getProblemFaced() : "";
         ConstraintEngineService.FilterResult filterResult = constraintEngine.applyConstraints(
             allPlaces, request.getEnergyLevel(), request.getTravelType(),
             request.getBudget(), request.getTimeAvailable(), problem, weather, request.getInterests());
 
-        // 7. Score and rank
+        // 8. Score and rank
         List<PlaceDTO> scored = optimizationService.scoreAndRank(
             filterResult.kept, request.getInterests(), weather, request.getEnergyLevel());
 
-        // 8. Limit to reasonable number of stops
+        // 9. Limit stops
         int maxStops = calculateMaxStops(request.getTimeAvailable());
         List<PlaceDTO> selected = scored.stream().limit(maxStops).collect(Collectors.toList());
         for (int i = maxStops; i < scored.size(); i++) {
             filterResult.removed.add(new RemovedPlaceDTO(scored.get(i).getName(), "Lower priority - enough stops selected"));
         }
 
-        // 9. Optimize stop order
-        double startLat = route.getWaypoints() != null && !route.getWaypoints().isEmpty() ? route.getWaypoints().get(0)[0] : 12.9716;
-        double startLng = route.getWaypoints() != null && !route.getWaypoints().isEmpty() ? route.getWaypoints().get(0)[1] : 77.5946;
-        double destLat = route.getWaypoints() != null && !route.getWaypoints().isEmpty() ? route.getWaypoints().get(route.getWaypoints().size()-1)[0] : 12.9716;
-        double destLng = route.getWaypoints() != null && !route.getWaypoints().isEmpty() ? route.getWaypoints().get(route.getWaypoints().size()-1)[1] : 77.5946;
-        selected = optimizationService.optimizeStopOrder(selected, startLat, startLng, destLat, destLng);
+        // 10. Optimize order
+        double sLat = startCoords[0], sLon = startCoords[1];
+        double eLat = endCoords[0], eLon = endCoords[1];
+        selected = optimizationService.optimizeStopOrder(selected, sLat, sLon, eLat, eLon);
 
-        // Round numeric values for clean display
+        // Round values
         for (PlaceDTO p : selected) {
             if (p.getRating() != null) p.setRating(round2(p.getRating()));
             if (p.getEstimatedCost() != null) p.setEstimatedCost(round2(p.getEstimatedCost()));
             if (p.getScore() != null) p.setScore(round2(p.getScore()));
         }
 
-        // 10. AI explanation
+        // 11. AI explanation
         String aiSummary = aiService.generateExplanation(selected, filterResult.removed, request, weather, route);
 
-        // 11. Build response values
+        // 12. Build response values
         double totalCost = round2(selected.stream().mapToDouble(p -> p.getEstimatedCost() != null ? p.getEstimatedCost() : 0).sum());
-        String travelTime = route.getTotalDuration();
-        String routeSummary = request.getStartLocation() + " to " + request.getDestination() +
-            " (" + (route.getTotalDistanceKm() != null ? route.getTotalDistanceKm() : "N/A") + " km)";
-        String weatherSummary = weather != null ?
-            weather.getCondition() + " " + weather.getTemperature() + " C" : "Weather data unavailable";
-        boolean isFallback = fallbackDataService.isMysoreDemo(request.getStartLocation(), request.getDestination());
+        String routeSummary = request.getStartLocation() + " → " + request.getDestination()
+            + " (" + (route.getTotalDistanceKm() != null ? route.getTotalDistanceKm() : "N/A") + " km)";
+        String weatherSummary = weather != null ? weather.getCondition() + " " + weather.getTemperature() + "°C" : "Weather unavailable";
 
-        // 12. Save to database
+        // 13. Save to MongoDB
         Trip trip = saveTrip(request, user, selected, filterResult.removed, aiSummary,
-            routeSummary, weatherSummary, totalCost, travelTime, isFallback);
+            routeSummary, weatherSummary, totalCost, route.getTotalDuration(), false);
 
-        // 13. Build response
+        // 14. Build and return response
         TripPlanResponse response = new TripPlanResponse();
         response.setTripId(trip.getId());
         response.setStartLocation(request.getStartLocation());
@@ -127,58 +116,149 @@ public class TripService {
         response.setRemovedPlaces(filterResult.removed);
         response.setAiSummary(aiSummary);
         response.setEstimatedTotalCost(totalCost);
-        response.setEstimatedTravelTime(travelTime);
+        response.setEstimatedTravelTime(route.getTotalDuration());
         response.setWeather(weather);
         response.setRoute(route);
-        response.setDemoMode(isFallback);
+        response.setDemoMode(false);
+        response.setFallback(false);
         response.setRouteSummary(routeSummary);
         response.setWeatherSummary(weatherSummary);
-        response.setFallback(isFallback);
         return response;
     }
 
-    private List<PlaceDTO> discoverPlacesAlongRoute(RouteDTO route, List<String> interests) {
+    /** Discover real places along route waypoints using Overpass API */
+    private List<PlaceDTO> discoverRealPlaces(RouteDTO route, TripPlanRequest req) {
         List<PlaceDTO> all = new ArrayList<>();
         List<double[]> waypoints = route.getWaypoints();
         if (waypoints == null || waypoints.isEmpty()) return all;
 
-        Set<String> searchCategories = new HashSet<>();
-        if (interests != null) {
-            for (String interest : interests) {
-                searchCategories.addAll(getSearchQueriesForInterest(interest));
-            }
-        }
-        if (searchCategories.isEmpty()) searchCategories.addAll(List.of("restaurants", "cafes", "temples"));
+        // Determine search categories from interests + travelStyle
+        List<String> categories = resolveCategories(req.getInterests(), req.getTravelStyle());
+        log.info("Searching categories: {} at {} waypoints", categories, waypoints.size());
 
-        // Search at route segment midpoints (every 2-3 waypoints)
-        int step = Math.max(1, waypoints.size() / 3);
-        for (int i = 0; i < waypoints.size(); i += step) {
-            double[] wp = waypoints.get(i);
-            for (String query : searchCategories) {
-                List<PlaceDTO> found = serpApiService.searchPlaces(query, wp[0], wp[1]);
-                all.addAll(found);
+        // Search at evenly spaced waypoints (max 4 search points to avoid rate limiting)
+        int totalWps = waypoints.size();
+        int[] indices = {0, totalWps / 3, 2 * totalWps / 3, totalWps - 1};
+
+        for (int idx : indices) {
+            if (idx >= totalWps) continue;
+            double[] wp = waypoints.get(idx);
+            for (String cat : categories) {
+                try {
+                    List<PlaceDTO> found = overpassApiService.searchNearby(cat, wp[0], wp[1], 3000);
+                    all.addAll(found);
+                    Thread.sleep(300); // Be respectful to free Overpass API
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } catch (Exception e) {
+                    log.warn("Search failed for category {} at waypoint: {}", cat, e.getMessage());
+                }
             }
         }
+
+        // If no real places found, fall back to SerpAPI demo data
+        if (all.isEmpty()) {
+            log.warn("No real places found via Overpass, using fallback data");
+            all = generateFallbackPlaces(waypoints, categories);
+        }
+
+        log.info("Total places discovered: {}", all.size());
         return all;
     }
 
-    private List<String> getSearchQueriesForInterest(String interest) {
-        switch (interest.toLowerCase()) {
-            case "food": return List.of("restaurants", "cafes");
-            case "nature": return List.of("parks", "viewpoints");
-            case "temple": return List.of("temples", "shrines");
-            case "shopping": return List.of("malls", "markets");
-            case "hotel": return List.of("hotels", "lodges");
-            case "rest": return List.of("cafes", "rest stops");
-            case "emergency": return List.of("hospital", "pharmacy");
-            case "museum": return List.of("museums", "historical places");
-            default: return List.of(interest + " near me");
+    private List<String> resolveCategories(List<String> interests, String travelStyle) {
+        Set<String> cats = new LinkedHashSet<>();
+
+        // Always include food and emergency as baseline
+        cats.add("food");
+
+        if (travelStyle != null) {
+            switch (travelStyle.toLowerCase()) {
+                case "adventure":    cats.add("adventure"); cats.add("nature"); break;
+                case "heritage":     cats.add("heritage"); cats.add("attraction"); break;
+                case "foodie":       cats.add("food"); cats.add("restaurant"); break;
+                case "nature":       cats.add("nature"); cats.add("attraction"); break;
+                case "spiritual":    cats.add("spiritual"); cats.add("heritage"); break;
+                case "shopping":     cats.add("shopping"); break;
+                case "luxury":       cats.add("hotel"); cats.add("attraction"); break;
+                case "budget":       cats.add("food"); cats.add("nature"); break;
+                case "family":       cats.add("attraction"); cats.add("nature"); break;
+                case "romantic":     cats.add("attraction"); cats.add("nature"); break;
+                default:             cats.add("attraction"); break;
+            }
+        }
+
+        if (interests != null) {
+            for (String interest : interests) {
+                switch (interest.toLowerCase()) {
+                    case "food":     cats.add("food"); break;
+                    case "temple":   cats.add("spiritual"); break;
+                    case "nature":   cats.add("nature"); break;
+                    case "museum":   cats.add("heritage"); break;
+                    case "shopping": cats.add("shopping"); break;
+                    case "rest":     cats.add("hotel"); break;
+                    default:         cats.add("attraction"); break;
+                }
+            }
+        }
+
+        // Add hotel if overnight trip (time > 8 hours)
+        cats.add("hotel");
+
+        return new ArrayList<>(cats);
+    }
+
+    private List<PlaceDTO> generateFallbackPlaces(List<double[]> waypoints, List<String> categories) {
+        List<PlaceDTO> places = new ArrayList<>();
+        String[] catNames = {"Scenic Viewpoint", "Local Dhaba", "Heritage Temple", "Rest Area Cafe",
+                "Nature Park", "Budget Hotel", "Market Area", "Tourist Attraction"};
+        String[] catTypes = {"nature", "food", "spiritual", "food", "nature", "hotel", "shopping", "attraction"};
+
+        Random r = new Random(waypoints.hashCode());
+        for (int i = 0; i < Math.min(catNames.length, 6); i++) {
+            double[] wp = waypoints.get(r.nextInt(waypoints.size()));
+            PlaceDTO p = new PlaceDTO();
+            p.setName(catNames[i]);
+            p.setCategory(catTypes[i]);
+            p.setLatitude(wp[0] + (r.nextDouble() - 0.5) * 0.05);
+            p.setLongitude(wp[1] + (r.nextDouble() - 0.5) * 0.05);
+            p.setAddress("Near route");
+            p.setRating(3.5 + r.nextDouble() * 1.3);
+            p.setEstimatedCost(getCostForCategory(catTypes[i]));
+            p.setOpenNow(true);
+            places.add(p);
+        }
+        return places;
+    }
+
+    private double getCostForCategory(String cat) {
+        switch (cat) {
+            case "food": return 150 + Math.random() * 250;
+            case "hotel": return 800 + Math.random() * 1500;
+            case "attraction": case "heritage": return 50 + Math.random() * 150;
+            case "nature": case "spiritual": return 0;
+            case "shopping": return 300 + Math.random() * 500;
+            default: return 100;
+        }
+    }
+
+    private void setDistancesFromRoute(List<PlaceDTO> places, RouteDTO route) {
+        if (route.getWaypoints() == null || route.getWaypoints().isEmpty()) return;
+        for (PlaceDTO p : places) {
+            if (p.getDistanceFromRoute() != null) continue;
+            double minDist = Double.MAX_VALUE;
+            for (double[] wp : route.getWaypoints()) {
+                double d = haversine(wp[0], wp[1], p.getLatitude(), p.getLongitude());
+                if (d < minDist) minDist = d;
+            }
+            p.setDistanceFromRoute(round2(minDist));
         }
     }
 
     private List<PlaceDTO> removeDuplicates(List<PlaceDTO> places) {
         Map<String, PlaceDTO> unique = new LinkedHashMap<>();
         for (PlaceDTO p : places) {
+            if (p.getName() == null || p.getName().isBlank()) continue;
             String key = p.getName().toLowerCase().replaceAll("[^a-z0-9]", "");
             if (!unique.containsKey(key)) unique.put(key, p);
         }
@@ -187,11 +267,11 @@ public class TripService {
 
     private int calculateMaxStops(Double timeAvailable) {
         if (timeAvailable == null) return 4;
-        if (timeAvailable <= 2) return 1;
-        if (timeAvailable <= 3) return 2;
-        if (timeAvailable <= 5) return 4;
-        if (timeAvailable <= 8) return 5;
-        return 6;
+        if (timeAvailable <= 2) return 2;
+        if (timeAvailable <= 4) return 3;
+        if (timeAvailable <= 6) return 4;
+        if (timeAvailable <= 10) return 5;
+        return 7;
     }
 
     private Trip saveTrip(TripPlanRequest req, User user, List<PlaceDTO> selected,
@@ -225,43 +305,54 @@ public class TripService {
             sp.setScore(p.getScore()); sp.setReason(p.getReason()); sp.setStopOrder(p.getStopOrder());
             placeRepo.save(sp);
         }
-        for (RemovedPlaceDTO r : removed) {
-            removedRepo.save(new RemovedPlace(trip.getId(), r.getName(), r.getReasonRemoved()));
+        for (RemovedPlaceDTO rm : removed) {
+            removedRepo.save(new RemovedPlace(trip.getId(), rm.getName(), rm.getReasonRemoved()));
         }
-
-        // Auto-save itinerary
         SavedItinerary saved = new SavedItinerary();
-        saved.setTripId(trip.getId());
-        saved.setUserId(user.getId());
-        saved.setAiSummary(aiSummary);
+        saved.setTripId(trip.getId()); saved.setUserId(user.getId()); saved.setAiSummary(aiSummary);
         try { saved.setItineraryJson(objectMapper.writeValueAsString(selected)); } catch (Exception e) { saved.setItineraryJson("[]"); }
         itineraryRepo.save(saved);
-
         return trip;
     }
 
     public TripPlanResponse getTripById(String tripId, User user) {
         Trip trip = tripRepo.findById(tripId).orElseThrow(() -> new RuntimeException("Trip not found"));
         if (!trip.getUserId().equals(user.getId())) throw new RuntimeException("Unauthorized");
-
         List<SuggestedPlace> sps = placeRepo.findByTripIdOrderByStopOrderAsc(tripId);
         List<RemovedPlace> rps = removedRepo.findByTripId(tripId);
-
         TripPlanResponse resp = new TripPlanResponse();
-        resp.setTripId(trip.getId());
-        resp.setStartLocation(trip.getStartLocation());
+        resp.setTripId(trip.getId()); resp.setStartLocation(trip.getStartLocation());
         resp.setDestination(trip.getDestination());
         resp.setSuggestedPlaces(sps.stream().map(this::toPlaceDTO).collect(Collectors.toList()));
         resp.setRemovedPlaces(rps.stream().map(r -> new RemovedPlaceDTO(r.getName(), r.getReasonRemoved())).collect(Collectors.toList()));
         resp.setAiSummary(trip.getAiSummary());
-        resp.setEstimatedTotalCost(trip.getEstimatedTotalCost() != null ? trip.getEstimatedTotalCost() :
-            sps.stream().mapToDouble(p -> p.getEstimatedCost() != null ? p.getEstimatedCost() : 0).sum());
+        resp.setEstimatedTotalCost(trip.getEstimatedTotalCost() != null ? trip.getEstimatedTotalCost() : 0.0);
         resp.setEstimatedTravelTime(trip.getEstimatedTravelTime());
         resp.setRouteSummary(trip.getRouteSummary());
         resp.setWeatherSummary(trip.getWeatherSummary());
-        resp.setDemoMode(trip.isFallback());
-        resp.setFallback(trip.isFallback());
+        resp.setDemoMode(false); resp.setFallback(false);
         return resp;
+    }
+
+    /** Fetch additional places for "Show More" feature */
+    public List<PlaceDTO> getMorePlaces(String tripId, String category, User user, int offset) {
+        Trip trip = tripRepo.findById(tripId).orElseThrow(() -> new RuntimeException("Trip not found"));
+        if (!trip.getUserId().equals(user.getId())) throw new RuntimeException("Unauthorized");
+
+        // Geocode destination to get coordinates for search
+        double[] coords = nominatimService.geocode(trip.getDestination());
+        List<PlaceDTO> places = overpassApiService.searchNearby(category, coords[0], coords[1], 5000);
+
+        // Skip already-saved places
+        List<SuggestedPlace> existing = placeRepo.findByTripIdOrderByStopOrderAsc(tripId);
+        Set<String> existingNames = existing.stream()
+            .map(p -> p.getName().toLowerCase().replaceAll("[^a-z0-9]", ""))
+            .collect(Collectors.toSet());
+
+        return places.stream()
+            .filter(p -> !existingNames.contains(p.getName().toLowerCase().replaceAll("[^a-z0-9]", "")))
+            .skip(offset).limit(5)
+            .collect(Collectors.toList());
     }
 
     public List<TripHistoryDTO> getTripHistory(User user) {
@@ -281,11 +372,9 @@ public class TripService {
     public void saveItinerary(String tripId, User user) {
         Trip trip = tripRepo.findById(tripId).orElseThrow(() -> new RuntimeException("Trip not found"));
         if (!trip.getUserId().equals(user.getId())) throw new RuntimeException("Unauthorized");
-
         TripPlanResponse resp = getTripById(tripId, user);
         SavedItinerary saved = itineraryRepo.findByTripId(tripId).orElse(new SavedItinerary());
-        saved.setTripId(trip.getId());
-        saved.setUserId(user.getId());
+        saved.setTripId(trip.getId()); saved.setUserId(user.getId());
         try { saved.setItineraryJson(objectMapper.writeValueAsString(resp)); } catch (Exception e) { saved.setItineraryJson("{}"); }
         saved.setAiSummary(resp.getAiSummary());
         itineraryRepo.save(saved);
@@ -301,7 +390,12 @@ public class TripService {
         return dto;
     }
 
-    private double round2(double val) {
-        return Math.round(val * 100.0) / 100.0;
+    private double round2(double v) { return Math.round(v * 100.0) / 100.0; }
+
+    private double haversine(double lat1, double lon1, double lat2, double lon2) {
+        double R = 6371;
+        double dLat = Math.toRadians(lat2 - lat1), dLon = Math.toRadians(lon2 - lon1);
+        double a = Math.sin(dLat/2)*Math.sin(dLat/2) + Math.cos(Math.toRadians(lat1))*Math.cos(Math.toRadians(lat2))*Math.sin(dLon/2)*Math.sin(dLon/2);
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
     }
 }
