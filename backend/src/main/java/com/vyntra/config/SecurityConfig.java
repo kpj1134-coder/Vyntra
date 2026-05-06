@@ -40,6 +40,7 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll() // Fix for preflight CORS
                 .requestMatchers("/").permitAll()                   // Root — no 403
+                .requestMatchers("/favicon.ico").permitAll()        // Prevent harmless 403 in console
                 .requestMatchers("/api/health").permitAll()         // Health check
                 .requestMatchers("/api/auth/**").permitAll()        // Login/Register
                 .requestMatchers("/api/weather/**").permitAll()     // Weather (public)
