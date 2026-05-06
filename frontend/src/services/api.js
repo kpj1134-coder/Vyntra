@@ -57,6 +57,11 @@ export const chatAPI = {
   send: (message, tripId) => api.post('/chat', { message, tripId }),
 }
 
+// EmotionRoute AI Mood Planner API
+export const moodAPI = {
+  analyze: (data) => api.post('/ai/mood-plan', data),
+}
+
 export const healthAPI = {
   check: () => api.get('/health'),
 }

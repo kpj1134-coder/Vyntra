@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { tripAPI } from '../services/api'
+import EmotionRoute from '../components/EmotionRoute' // EmotionRoute AI Mood Planner
 
 const TRAVEL_STYLES = [
   { id: 'adventure',  label: 'Adventure',  icon: '🏔️', desc: 'Trek, viewpoints, activities' },
@@ -35,6 +36,8 @@ export default function PlanTrip() {
   })
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState('')
+  // EmotionRoute AI Mood Planner state
+  const [moodResult, setMoodResult] = useState(null)
   const navigate = useNavigate()
 
   const toggleInterest = (id) => {
@@ -263,6 +266,25 @@ export default function PlanTrip() {
                   )
                 })}
               </div>
+            </div>
+
+            {/* ── EmotionRoute AI Mood Planner ── */}
+            <div style={{ borderTop:'1px solid #e2e8f0', paddingTop:'1.5rem', marginTop:'0.5rem', marginBottom:'1.5rem' }}>
+              <EmotionRoute
+                source={form.startLocation}
+                destination={form.destination}
+                onMoodResult={(result) => {
+                  setMoodResult(result)
+                  // Auto-map AI trip type to form travelStyle if not already set
+                  const tripType = result?.moodAnalysis?.tripType
+                  if (tripType && !form.travelStyle) {
+                    setForm(prev => ({ ...prev, travelStyle: tripType }))
+                  }
+                  // Auto-set energy level from AI
+                  const energy = result?.moodAnalysis?.energyLevel
+                  if (energy) setForm(prev => ({ ...prev, energyLevel: energy }))
+                }}
+              />
             </div>
 
             <div className="flex justify-between">
